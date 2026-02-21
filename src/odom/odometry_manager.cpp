@@ -1,5 +1,5 @@
 /*
- * Coco-LIC: Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
+ * Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
  * Copyright (C) 2023 Xiaolei Lang
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,9 @@ namespace cocolic
   OdometryManager::OdometryManager(const YAML::Node &node, ros::NodeHandle &nh)
       : odometry_mode_(LIO), is_initialized_(false)
   {
-    std::string config_path = node["config_path"].as<std::string>();
+    std::string config_path;
+    nh.param<std::string>("project_path", config_path, "");
+    config_path += "/config";
 
     std::string lidar_yaml = node["lidar_yaml"].as<std::string>();
     YAML::Node lidar_node = YAML::LoadFile(config_path + lidar_yaml);
@@ -101,7 +103,7 @@ namespace cocolic
         0.0, 0.0, 1.0;
 
     // trajectory parameterized by b-spline
-    trajectory_manager_ = std::make_shared<TrajectoryManager>(node, trajectory_);
+    trajectory_manager_ = std::make_shared<TrajectoryManager>(node, config_path, trajectory_);
     trajectory_manager_->use_lidar_scale = use_lidar_scale_;
     trajectory_manager_->SetIntrinsic(K_);
 
@@ -111,7 +113,7 @@ namespace cocolic
 
     odom_viewer_.SetPublisher(nh);
 
-    msg_manager_ = std::make_shared<MsgManager>(node, nh);  // load rosbag
+    msg_manager_ = std::make_shared<MsgManager>(node, config_path, nh);  // load rosbag
 
     bool verbose;
     nh.param<double>("pasue_time", pasue_time_, -1);
@@ -122,8 +124,13 @@ namespace cocolic
     is_evo_viral_ = node["is_evo_viral"].as<bool>();
     CreateCacheFolder(config_path, msg_manager_->bag_path_);
 
+    // gaussian-lic
+    if_3dgs_ = node["if_3dgs"].as<bool>();
+    lidar_skip_ = node["lidar_skip"].as<int>();
+    lidarpoints.clear();
+
     std::cout << std::fixed << std::setprecision(4);
-    LOG(INFO) << std::fixed << std::setprecision(4);
+    // LOG(INFO) << std::fixed << std::setprecision(4);
   }
 
   bool OdometryManager::CreateCacheFolder(const std::string &config_path,
@@ -243,7 +250,7 @@ namespace cocolic
     msg_manager_->LogInfo();
     if (msg_manager_->cur_msgs.lidar_timestamp < 0)
     {
-      LOG(INFO) << "CANT SolveLICO!";
+      // LOG(INFO) << "CANT SolveLICO!";
     }
 
     // lic optimization
@@ -267,14 +274,14 @@ namespace cocolic
     bool process_image = msg.if_have_image && msg.image_timestamp > t_begin_add_cam_;
     if (process_image)
     {
-      LOG(INFO) << "Process " << msg.scan_num << " scans in ["
-                << msg.lidar_timestamp * NS_TO_S << ", " << msg.lidar_max_timestamp * NS_TO_S << "]"
-                << "; image_time: " << msg.image_timestamp * NS_TO_S;
+      // LOG(INFO) << "Process " << msg.scan_num << " scans in ["
+      //           << msg.lidar_timestamp * NS_TO_S << ", " << msg.lidar_max_timestamp * NS_TO_S << "]"
+      //           << "; image_time: " << msg.image_timestamp * NS_TO_S;
     }
     else
     {
-      LOG(INFO) << "Process " << msg.scan_num << " scans in ["
-                << msg.lidar_timestamp * NS_TO_S << ", " << msg.lidar_max_timestamp * NS_TO_S << "]";
+      // LOG(INFO) << "Process " << msg.scan_num << " scans in ["
+      //           << msg.lidar_timestamp * NS_TO_S << ", " << msg.lidar_max_timestamp * NS_TO_S << "]";
     }
 
     /// [1] transform the format of lidar pointcloud -> feature_cur_、feature_cur_ds_
@@ -413,6 +420,12 @@ namespace cocolic
       }
     }
 
+    /// [new] for Gaussian-LIC
+    if (process_image && if_3dgs_)
+    {
+      Publish3DGSMappingData(msg);
+    }
+
     /// [8] visualize tf in rviz
     auto pose = trajectory_->GetLidarPoseNURBS(msg.lidar_timestamp);
     auto pose_debug = trajectory_->GetCameraPoseNURBS(msg.lidar_timestamp);
@@ -521,18 +534,18 @@ namespace cocolic
       }
       var_r = sqrt(var_r / (cnt - 1));
       var_a = sqrt(var_a / (cnt - 1));
-      LOG(INFO) << "[aver_r_first] " << aver_r.norm() << " | [aver_a_first] " << aver_a.norm();
-      LOG(INFO) << "[var_r_first] " << var_r << " | [var_a_first] " << var_a;
+      // LOG(INFO) << "[aver_r_first] " << aver_r.norm() << " | [aver_a_first] " << aver_a.norm();
+      // LOG(INFO) << "[var_r_first] " << var_r << " | [var_a_first] " << var_a;
 
       if (non_uniform_)
       {
         cp_add_num = GetKnotDensity(aver_r.norm(), aver_a.norm());
       }
-      LOG(INFO) << "[cp_add_num_first] " << cp_add_num;
+      // LOG(INFO) << "[cp_add_num_first] " << cp_add_num;
       cp_num_vec.push_back(cp_add_num);
 
       int64_t step = (traj_max_time_ns_cur - trajectory_->maxTimeNsNURBS()) / cp_add_num;
-      LOG(INFO) << "[extend_step_first] " << step;
+      // LOG(INFO) << "[extend_step_first] " << step;
       for (int i = 0; i < cp_add_num - 1; i++)
       {
         int64_t time = trajectory_->maxTimeNsNURBS() + step * (i + 1);
@@ -570,18 +583,18 @@ namespace cocolic
       }
       var_r = sqrt(var_r / (cnt - 1));
       var_a = sqrt(var_a / (cnt - 1));
-      LOG(INFO) << "[aver_r_second] " << aver_r.norm() << " | [aver_a_second] " << aver_a.norm();
-      LOG(INFO) << "[var_r_second] " << var_r << " | [var_a_second] " << var_a;
+      // LOG(INFO) << "[aver_r_second] " << aver_r.norm() << " | [aver_a_second] " << aver_a.norm();
+      // LOG(INFO) << "[var_r_second] " << var_r << " | [var_a_second] " << var_a;
 
       if (non_uniform_)
       {
         cp_add_num = GetKnotDensity(aver_r.norm(), aver_a.norm());
       }
-      LOG(INFO) << "[cp_add_num_second] " << cp_add_num;
+      // LOG(INFO) << "[cp_add_num_second] " << cp_add_num;
       cp_num_vec.push_back(cp_add_num);
 
       int64_t step = (traj_max_time_ns_next - traj_max_time_ns_cur) / cp_add_num;
-      LOG(INFO) << "[extend_step_second] " << step;
+      // LOG(INFO) << "[extend_step_second] " << step;
       for (int i = 0; i < cp_add_num - 1; i++)
       {
         int64_t time = traj_max_time_ns_cur + step * (i + 1);
@@ -669,18 +682,18 @@ namespace cocolic
       }
       var_r = sqrt(var_r / (cnt - 1));
       var_a = sqrt(var_a / (cnt - 1));
-      LOG(INFO) << "[aver_r_new] " << aver_r.norm() << " | [aver_a_new] " << aver_a.norm();
-      LOG(INFO) << "[var_r_new] " << var_r << " | [var_a_new] " << var_a;
+      // LOG(INFO) << "[aver_r_new] " << aver_r.norm() << " | [aver_a_new] " << aver_a.norm();
+      // LOG(INFO) << "[var_r_new] " << var_r << " | [var_a_new] " << var_a;
 
       if (non_uniform_)
       {
         cp_add_num = GetKnotDensity(aver_r.norm(), aver_a.norm());
       }
-      LOG(INFO) << "[cp_add_num_new] " << cp_add_num;
+      // LOG(INFO) << "[cp_add_num_new] " << cp_add_num;
       cp_num_vec.push_back(cp_add_num);
 
       int64_t step = (traj_max_time_ns_next_next - traj_max_time_ns_next) / cp_add_num;
-      LOG(INFO) << "[extend_step_new] " << step;
+      // LOG(INFO) << "[extend_step_new] " << step;
       for (int i = 0; i < cp_add_num - 1; i++)
       {
         int64_t time = traj_max_time_ns_next + step * (i + 1);
@@ -721,6 +734,138 @@ namespace cocolic
 
     odom_viewer_.PublishSplineTrajectory(
         trajectory_, 0.0, trajectory_->maxTimeNURBS(), 0.1);
+  }
+
+  void OdometryManager::Publish3DGSMappingData(const NextMsgs& msg)
+  {
+    time_buf.push(msg.image_timestamp);
+    lidar_buf.push(lidar_handler_->GetFeatureCurrent());
+    img_buf.push(camera_handler_->img_pose_->m_img);
+
+    while(1)
+    {
+      int64_t active_time = trajectory_->GetActiveTime();
+      if (time_buf.front() < active_time && lidar_buf.front().time_max < active_time)
+      {
+        auto time = time_buf.front();
+        auto lidar = lidar_buf.front();
+        auto img = img_buf.front();
+        time_buf.pop();
+        lidar_buf.pop();
+        img_buf.pop();
+
+        PosCloud::Ptr cloud_undistort_ds = PosCloud::Ptr(new PosCloud);
+        // PosCloud::Ptr cloud_distort_ds = lidar.surface_features;
+        PosCloud::Ptr cloud_distort_ds = lidar.full_cloud;
+        if (cloud_distort_ds->size() != 0)
+        {
+          trajectory_->UndistortScanInG(*cloud_distort_ds, lidar.timestamp, *cloud_undistort_ds);
+          lidarpoints.push_back(cloud_undistort_ds);
+        }
+
+        // image
+        odom_viewer_.Publish3DGSImage(img, time + trajectory_->GetDataStartTime());
+
+        auto pose_cam = trajectory_->GetCameraPoseNURBS(time);
+        auto inv_pose_cam = pose_cam.inverse();
+        auto cam_K = camera_handler_->m_camera_intrinsic;
+        double fx = cam_K(0, 0), fy = cam_K(1, 1);
+        double cx = cam_K(0, 2), cy = cam_K(1, 2);
+        int H = camera_handler_->img_pose_->m_img.rows;
+        int W = camera_handler_->img_pose_->m_img.cols;
+
+        // depth
+        cv::Mat depthmap = cv::Mat::zeros(H, W, CV_32FC1);
+        for (int j = std::max(0, int(lidarpoints.size()) - 5); j < lidarpoints.size(); j++)
+        {
+          auto lidarpoint = lidarpoints[j];
+          for (int i = 0; i < lidarpoint->size(); i++)
+          {
+            auto pt = lidarpoint->points[i];
+            Eigen::Vector3d pt_w = Eigen::Vector3d(pt.x, pt.y, pt.z);
+            Eigen::Vector3d pt_c = inv_pose_cam.unit_quaternion().toRotationMatrix() * pt_w + inv_pose_cam.translation();
+            double depth = pt_c(2);
+            pt_c /= pt_c(2);
+            double u = fx * pt_c(0) + cx;
+            double v = fy * pt_c(1) + cy;
+            int i_u = std::round(u), i_v = std::round(v);
+            if (depth <= 0) continue;
+            if (!((i_u >= 0 && i_u < W && i_v >= 0 && i_v < H))) continue;
+
+            float& current_depth = depthmap.at<float>(i_v, i_u);
+            if (current_depth == 0 || depth < current_depth) 
+            {
+                current_depth = depth;
+            }
+          }
+        }
+        while (lidarpoints.size() > 5)
+        {
+          lidarpoints.erase(lidarpoints.begin());
+        }
+        odom_viewer_.Publish3DGSDepth(depthmap, time + trajectory_->GetDataStartTime());
+
+        // pose
+        odom_viewer_.Publish3DGSPose(pose_cam.unit_quaternion(), pose_cam.translation(), time + trajectory_->GetDataStartTime());
+
+        // points
+        int filter_cnt = 0;
+        int skip = lidar_skip_;
+        Eigen::aligned_vector<Eigen::Vector3d> new_points;
+        Eigen::aligned_vector<Eigen::Vector3i> new_colors;
+        for (int i = 0; i < cloud_undistort_ds->points.size(); i += skip)
+        {
+          auto pt = cloud_undistort_ds->points[i];
+          Eigen::Vector3d pt_w = Eigen::Vector3d(pt.x, pt.y, pt.z);
+          Eigen::Vector3d pt_c = inv_pose_cam.unit_quaternion().toRotationMatrix() * pt_w + inv_pose_cam.translation();
+          if (pt_c(2) < 0.01) 
+          {
+            filter_cnt++;
+            continue;
+          }
+          pt_c /= pt_c(2);
+          double u = fx * pt_c(0) + cx;
+          double v = fy * pt_c(1) + cy;
+          if (u < 0 || u > W - 1) 
+          {
+            filter_cnt++;
+            continue;
+          }
+          new_points.push_back(Eigen::Vector3d(pt.x, pt.y, pt.z));
+
+          int i_u = std::round(u), i_v = std::round(v);
+          int blue = 0, green = 0, red = 0;
+          if (i_u >= 0 && i_u < W && i_v >= 0 && i_v < H)
+          {
+            int u0 = std::floor(u), v0 = std::floor(v);
+            int u1 = std::min(u0 + 1, W - 1), v1 = std::min(v0 + 1, H - 1);
+            double du = u - u0, dv = v - v0;
+
+            cv::Vec3b c00 = camera_handler_->img_pose_->m_img.at<cv::Vec3b>(v0, u0);
+            cv::Vec3b c10 = camera_handler_->img_pose_->m_img.at<cv::Vec3b>(v0, u1);
+            cv::Vec3b c01 = camera_handler_->img_pose_->m_img.at<cv::Vec3b>(v1, u0);
+            cv::Vec3b c11 = camera_handler_->img_pose_->m_img.at<cv::Vec3b>(v1, u1);
+
+            Eigen::Vector3d color00(c00[0], c00[1], c00[2]);
+            Eigen::Vector3d color10(c10[0], c10[1], c10[2]);
+            Eigen::Vector3d color01(c01[0], c01[1], c01[2]);
+            Eigen::Vector3d color11(c11[0], c11[1], c11[2]);
+
+            Eigen::Vector3d interpolated_color = 
+                (1 - du) * (1 - dv) * color00 + 
+                du * (1 - dv) * color10 + 
+                (1 - du) * dv * color01 + 
+                du * dv * color11;
+            blue = std::round(interpolated_color.x());
+            green = std::round(interpolated_color.y());
+            red = std::round(interpolated_color.z());
+          }
+          new_colors.push_back(Eigen::Vector3i(red, green, blue));
+        }
+        odom_viewer_.Publish3DGSPoints(new_points, new_colors, time + trajectory_->GetDataStartTime());
+      }
+      else break;
+    }
   }
 
   double OdometryManager::SaveOdometry()

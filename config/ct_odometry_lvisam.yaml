@@ -1,12 +1,12 @@
 odometry_mode: 0  # LIO = 0, LICO = 1
 
-log_path: /home/jerry/log
-config_path: /home/jerry/catkin_ws/src/Coco-LIC/config
 lidar_yaml: /lvisam/lidar.yaml
 imu_yaml: /lvisam/imu.yaml
 camera_yaml: /lvisam/camera.yaml
 
-bag_path: /home/jerry/dataset/handheld.bag  # jackal.bag、garden.bag
+# jackal.bag
+# garden.bag
+bag_path: /path/to/xxx.bag
 bag_start: 0.
 bag_durr: -1
 
@@ -34,3 +34,8 @@ accelerometer_random_walk: 3.92e-04
 
 ### EvalutaionParams ###
 is_evo_viral: false
+
+
+### Gaussian-LIC ###
+if_3dgs: false  # if sending data to back-end for incremental Gaussian mapping
+lidar_skip: 10  # downsample: randomly select a LiDAR point every [lidar_skip] points

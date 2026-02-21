@@ -1,5 +1,5 @@
 /*
- * Coco-LIC: Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
+ * Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
  * Copyright (C) 2023 Xiaolei Lang
  *
  * This program is free software: you can redistribute it and/or modify
@@ -91,7 +91,7 @@ namespace cocolic
       max_time[0] = pcl::GetCloudMaxTimeNs(lidar_surf_cloud) * NS_TO_S;
       max_time[1] = pcl::GetCloudMaxTimeNs(lidar_corner_cloud) * NS_TO_S;
       max_time[2] = pcl::GetCloudMaxTimeNs(lidar_raw_cloud) * NS_TO_S;
-      LOG(INFO) << "[surf | corn | raw | max] " << max_time[0] << " " << max_time[1] << " " << max_time[2] << " " << lidar_max_timestamp * NS_TO_S;
+      // LOG(INFO) << "[surf | corn | raw | max] " << max_time[0] << " " << max_time[1] << " " << max_time[2] << " " << lidar_max_timestamp * NS_TO_S;
       for (int i = 0; i < 3; i++)
       {
         if ((max_time[i] - lidar_max_timestamp * NS_TO_S) > 1e-6)
@@ -196,7 +196,7 @@ namespace cocolic
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     typedef std::shared_ptr<MsgManager> Ptr;
 
-    MsgManager(const YAML::Node &node, ros::NodeHandle &nh);
+    MsgManager(const YAML::Node &node, const std::string &config_path, ros::NodeHandle &nh);
 
     // 
     void SpinBagOnce();
@@ -245,7 +245,7 @@ namespace cocolic
       double delta_time = ros_bag_time - msg_time;
       if (delta_time < 0.08)
       {
-        LOG(INFO) << "[CheckLidarMsgTimestamp] Delta Time : " << delta_time;
+        // LOG(INFO) << "[CheckLidarMsgTimestamp] Delta Time : " << delta_time;
       }
     }
 
@@ -319,13 +319,13 @@ namespace cocolic
     bool lidar_timestamp_end_;
     bool remove_wrong_time_imu_;
     bool if_normalized_;
-    bool if_compressed_;
+    double img_time_offset_;
 
     std::string imu_topic_;
     int num_lidars_;
     std::vector<LiDARType> lidar_types;
     std::vector<std::string> lidar_topics_;
-    std::string image_topic_;
+    std::string image_topic_, image_topic_compressed_;
 
     // std::string pose_topic_;
 

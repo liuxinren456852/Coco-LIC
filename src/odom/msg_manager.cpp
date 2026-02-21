@@ -1,5 +1,5 @@
 /*
- * Coco-LIC: Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
+ * Coco-LIC: Continuous-Time Tightly-Coupled LiDAR-Inertial-Camera Odometry using Non-Uniform B-spline
  * Copyright (C) 2023 Xiaolei Lang
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,7 +24,7 @@
 namespace cocolic
 {
 
-  MsgManager::MsgManager(const YAML::Node &node, ros::NodeHandle &nh)
+  MsgManager::MsgManager(const YAML::Node &node, const std::string &config_path, ros::NodeHandle &nh)
       : has_valid_msg_(true),
         t_offset_imu_(0),
         t_offset_camera_(0),
@@ -36,8 +36,6 @@ namespace cocolic
         if_normalized_(false),
         image_topic_("")
   {
-    std::string config_path = node["config_path"].as<std::string>();
-
     OdometryMode odom_mode = OdometryMode(node["odometry_mode"].as<int>());
 
     nh.param<std::string>("bag_path", bag_path_, "");
@@ -59,7 +57,7 @@ namespace cocolic
 
     std::string cam_yaml = node["camera_yaml"].as<std::string>();
     YAML::Node cam_node = YAML::LoadFile(config_path + cam_yaml);
-    if_compressed_ = cam_node["if_compressed"].as<bool>();
+    img_time_offset_ = cam_node["img_time_offset"].as<double>();
 
     // add_extra_timeoffset_s_ =
     //     yaml::GetValue<double>(node, "add_extra_timeoffset_s", 0);
@@ -74,6 +72,7 @@ namespace cocolic
       std::string cam_yaml = config_path + node["camera_yaml"].as<std::string>();
       YAML::Node cam_node = YAML::LoadFile(cam_yaml);
       image_topic_ = cam_node["image_topic"].as<std::string>();
+      image_topic_compressed_ = std::string(image_topic_).append("/compressed");
 
       pub_img_ = nh.advertise<sensor_msgs::Image>("/vio/test_img", 1000);
     }
@@ -142,7 +141,10 @@ namespace cocolic
     std::vector<std::string> topics;
     topics.push_back(imu_topic_); // imu
     if (use_image_)               // camera
+    {
       topics.push_back(image_topic_);
+      topics.push_back(image_topic_compressed_);
+    }
     for (auto &v : lidar_topics_) // lidar
       topics.push_back(v);
     // topics.push_back(pose_topic_);
@@ -165,8 +167,8 @@ namespace cocolic
 
     std::cout << "\n🍺 LoadBag " << bag_path_ << " start at " << bag_start
               << " with duration " << (time_finish - time_start).toSec() << ".\n";
-    LOG(INFO) << "LoadBag " << bag_path_ << " start at " << bag_start
-              << " with duration " << (time_finish - time_start).toSec();
+    // LOG(INFO) << "LoadBag " << bag_path_ << " start at " << bag_start
+    //           << " with duration " << (time_finish - time_start).toSec();
   }
 
   void MsgManager::SpinBagOnce()
@@ -175,7 +177,7 @@ namespace cocolic
     if (view_iterator == view_.end())
     {
       has_valid_msg_ = false;
-      LOG(INFO) << "End of bag";
+      // LOG(INFO) << "End of bag";
       return;
     }
 
@@ -213,14 +215,14 @@ namespace cocolic
         LivoxMsgHandle(lidar_msg, idx);
       }
     }
-    else if (msg_topic == image_topic_)  // camera
+    else if (msg_topic == image_topic_ || msg_topic == image_topic_compressed_)  // camera
     {
-      if (if_compressed_)
+      if (m.getDataType() == "sensor_msgs/CompressedImage")
       {
         sensor_msgs::CompressedImageConstPtr image_msg = m.instantiate<sensor_msgs::CompressedImage>();
         ImageMsgHandle(image_msg);
       }
-      else
+      else if (m.getDataType() == "sensor_msgs/Image")
       {
         sensor_msgs::ImageConstPtr image_msg = m.instantiate<sensor_msgs::Image>();
         ImageMsgHandle(image_msg);
@@ -236,8 +238,8 @@ namespace cocolic
     m_size[0] = imu_buf_.size();
     m_size[1] = lidar_buf_.size();
     // if (use_image_) m_size[2] = feature_tracker_node_->NumImageMsg();
-    LOG(INFO) << "imu/lidar/image msg left: " << m_size[0] << "/" << m_size[1]
-              << "/" << m_size[2];
+    // LOG(INFO) << "imu/lidar/image msg left: " << m_size[0] << "/" << m_size[1]
+    //           << "/" << m_size[2];
   }
 
   void MsgManager::RemoveBeginData(int64_t start_time, // not used
@@ -296,8 +298,8 @@ namespace cocolic
   bool MsgManager::HasEnvMsg() const
   {
     int env_msg = lidar_buf_.size();
-    if (cur_imu_timestamp_ < 0 && env_msg > 100)
-      LOG(WARNING) << "No IMU data. CHECK imu topic" << imu_topic_;
+    // if (cur_imu_timestamp_ < 0 && env_msg > 100)
+    //   LOG(WARNING) << "No IMU data. CHECK imu topic" << imu_topic_;
 
     return env_msg > 0;
   }
@@ -510,7 +512,7 @@ namespace cocolic
         ++it; // 
       }
     }
-    LOG(INFO) << "[msgs_scan_num] " << msgs.scan_num;
+    // LOG(INFO) << "[msgs_scan_num] " << msgs.scan_num;
 
     /// 3 
     if (use_image_)
@@ -680,7 +682,7 @@ namespace cocolic
     }
 
     image_buf_.emplace_back();
-    image_buf_.back().timestamp = msg->header.stamp.toSec() * S_TO_NS;
+    image_buf_.back().timestamp = msg->header.stamp.toNSec() + img_time_offset_ * S_TO_NS;
     image_buf_.back().image = cvImgPtr->image;
     nerf_time_.push_back(image_buf_.back().timestamp);
 
@@ -715,7 +717,7 @@ namespace cocolic
     }
 
     image_buf_.emplace_back();
-    image_buf_.back().timestamp = msg->header.stamp.toSec() * S_TO_NS;
+    image_buf_.back().timestamp = msg->header.stamp.toNSec() + img_time_offset_ * S_TO_NS;
     image_buf_.back().image = cvImgPtr->image;
     nerf_time_.push_back(image_buf_.back().timestamp);
 
